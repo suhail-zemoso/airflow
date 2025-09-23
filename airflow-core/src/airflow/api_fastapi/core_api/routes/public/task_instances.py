@@ -21,9 +21,9 @@ from typing import Annotated, Literal, cast
 
 import structlog
 from fastapi import Depends, HTTPException, Query, status
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import joinedload
-from sqlalchemy.sql.selectable import Select
+from sqlalchemy.sql import Select
 
 from airflow.api_fastapi.auth.managers.models.resource_details import DagAccessEntity
 from airflow.api_fastapi.common.dagbag import (
@@ -76,7 +76,8 @@ from airflow.api_fastapi.core_api.services.public.task_instances import (
 )
 from airflow.api_fastapi.logging.decorators import action_logging
 from airflow.exceptions import TaskNotFound
-from airflow.models import Base, DagRun
+from airflow.models import Base
+from airflow.models.dagrun import DagRun
 from airflow.models.taskinstance import TaskInstance as TI, clear_task_instances
 from airflow.models.taskinstancehistory import TaskInstanceHistory as TIH
 from airflow.ti_deps.dep_context import DepContext
@@ -389,13 +390,13 @@ def get_task_instances(
     dag_id: str,
     dag_run_id: str,
     dag_bag: DagBagDep,
-    task_id: Annotated[FilterParam[str | None], Depends(filter_param_factory(TI.task_id, str | None))],
     run_after_range: Annotated[RangeFilter, Depends(datetime_range_filter_factory("run_after", TI))],
     logical_date_range: Annotated[RangeFilter, Depends(datetime_range_filter_factory("logical_date", TI))],
     start_date_range: Annotated[RangeFilter, Depends(datetime_range_filter_factory("start_date", TI))],
     end_date_range: Annotated[RangeFilter, Depends(datetime_range_filter_factory("end_date", TI))],
     update_at_range: Annotated[RangeFilter, Depends(datetime_range_filter_factory("updated_at", TI))],
     duration_range: Annotated[RangeFilter, Depends(float_range_filter_factory("duration", TI))],
+    task_id: Annotated[FilterParam[str | None], Depends(filter_param_factory(TI.task_id, str | None))],
     task_display_name_pattern: QueryTITaskDisplayNamePatternSearch,
     state: QueryTIStateFilter,
     pool: QueryTIPoolFilter,
@@ -404,8 +405,14 @@ def get_task_instances(
     version_number: QueryTIDagVersionFilter,
     limit: QueryLimit,
     offset: QueryOffset,
+    readable_ti_filter: ReadableTIFilterDep,
+    session: SessionDep,
+    operator_type: str | None = Query(
+        None,
+        description="Filter task instances by operator type (e.g., 'PythonOperator', 'BashOperator')",
+    ),
     order_by: Annotated[
-        SortParam,
+        SortParam | None,
         Depends(
             SortParam(
                 [
@@ -431,9 +438,7 @@ def get_task_instances(
                 },
             ).dynamic_depends(default="map_index")
         ),
-    ],
-    readable_ti_filter: ReadableTIFilterDep,
-    session: SessionDep,
+    ] = None,
 ) -> TaskInstanceCollectionResponse:
     """
     Get list of task instances.
@@ -442,13 +447,59 @@ def get_task_instances(
     and DAG runs.
     """
     dag_run = None
-    query = (
-        select(TI)
-        .join(TI.dag_run)
-        .outerjoin(TI.dag_version)
-        .options(joinedload(TI.dag_version))
-        .options(joinedload(TI.dag_run).options(joinedload(DagRun.dag_model)))
+    # First create the base query with necessary joins
+    query = select(TI).join(TI.dag_run).outerjoin(TI.dag_version)
+
+    # Apply task_id filter if provided
+    if task_id is not None and task_id != "~":
+        # Convert the query to a subquery to apply the filter
+        subquery = select(TI.id).select_from(TI)
+        subquery = task_id.to_orm(subquery)
+        query = query.where(TI.id.in_(subquery))
+
+    # Add the eager loading options
+    query = query.options(
+        joinedload(TI.dag_version), joinedload(TI.dag_run).options(joinedload(DagRun.dag_model))
     )
+
+    # Apply operator_type filter if provided
+    if operator_type:
+        # Get all task instances first
+        all_instances = session.scalars(query).all()
+        # Find task instances with matching operator type
+        filtered_instances = []
+        for ti in all_instances:
+            ti_operator = getattr(ti, "operator", None)
+            ti_task = getattr(ti, "task", None)
+
+            # Check operator at task instance level first
+            if ti_operator == operator_type:
+                filtered_instances.append(ti)
+                continue
+
+            # Fall back to checking task object if needed
+            if ti_task and operator_type in [
+                getattr(ti_task, "operator_name", None),
+                getattr(ti_task, "operator", None),
+                getattr(ti_task, "task_type", None),
+                ti_task.__class__.__name__ if hasattr(ti_task, "__class__") else None,
+            ]:
+                filtered_instances.append(ti)
+
+        if not filtered_instances:
+            return TaskInstanceCollectionResponse(
+                task_instances=[],
+                total_entries=0,
+            )
+
+        # Create a list of conditions for each filtered instance
+        conditions = []
+        for ti in filtered_instances:
+            conditions.append(and_(TI.dag_id == ti.dag_id, TI.task_id == ti.task_id, TI.run_id == ti.run_id))
+
+        # Combine conditions with OR and apply to query
+        if conditions:
+            query = query.where(or_(*conditions))
     if dag_run_id != "~":
         dag_run = session.scalar(select(DagRun).filter_by(run_id=dag_run_id))
         if not dag_run:
@@ -474,7 +525,6 @@ def get_task_instances(
             pool,
             queue,
             executor,
-            task_id,
             task_display_name_pattern,
             version_number,
             readable_ti_filter,

@@ -4970,9 +4970,7 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema:
-                type: 'null'
-                title: Response Delete Task Instance
+              schema: {}
         '401':
           content:
             application/json:
@@ -5684,14 +5682,18 @@ paths:
         schema:
           type: string
           title: Dag Run Id
-      - name: task_id
+      - name: operator_type
         in: query
         required: false
         schema:
           anyOf:
           - type: string
           - type: 'null'
-          title: Task Id
+          description: Filter task instances by operator type (e.g., 'PythonOperator',
+            'BashOperator')
+          title: Operator Type
+        description: Filter task instances by operator type (e.g., 'PythonOperator',
+          'BashOperator')
       - name: run_after_gte
         in: query
         required: false
@@ -5798,6 +5800,14 @@ paths:
           - type: number
           - type: 'null'
           title: Duration Lte
+      - name: task_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Task Id
       - name: task_display_name_pattern
         in: query
         required: false
@@ -7050,9 +7060,7 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema:
-                type: 'null'
-                title: Response Reparse Dag File
+              schema: {}
         '401':
           content:
             application/json:

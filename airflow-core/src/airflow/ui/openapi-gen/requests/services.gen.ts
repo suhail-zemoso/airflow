@@ -1933,7 +1933,7 @@ export class TaskInstanceService {
      * @param data.dagRunId
      * @param data.taskId
      * @param data.mapIndex
-     * @returns null Successful Response
+     * @returns unknown Successful Response
      * @throws ApiError
      */
     public static deleteTaskInstance(data: DeleteTaskInstanceData): CancelablePromise<DeleteTaskInstanceResponse> {
@@ -2228,7 +2228,7 @@ export class TaskInstanceService {
      * @param data The data for the request.
      * @param data.dagId
      * @param data.dagRunId
-     * @param data.taskId
+     * @param data.operatorType Filter task instances by operator type (e.g., 'PythonOperator', 'BashOperator')
      * @param data.runAfterGte
      * @param data.runAfterLte
      * @param data.logicalDateGte
@@ -2241,6 +2241,7 @@ export class TaskInstanceService {
      * @param data.updatedAtLte
      * @param data.durationGte
      * @param data.durationLte
+     * @param data.taskId
      * @param data.taskDisplayNamePattern SQL LIKE expression — use `%` / `_` wildcards (e.g. `%customer_%`). Regular expressions are **not** supported.
      * @param data.state
      * @param data.pool
@@ -2262,7 +2263,7 @@ export class TaskInstanceService {
                 dag_run_id: data.dagRunId
             },
             query: {
-                task_id: data.taskId,
+                operator_type: data.operatorType,
                 run_after_gte: data.runAfterGte,
                 run_after_lte: data.runAfterLte,
                 logical_date_gte: data.logicalDateGte,
@@ -2275,6 +2276,7 @@ export class TaskInstanceService {
                 updated_at_lte: data.updatedAtLte,
                 duration_gte: data.durationGte,
                 duration_lte: data.durationLte,
+                task_id: data.taskId,
                 task_display_name_pattern: data.taskDisplayNamePattern,
                 state: data.state,
                 pool: data.pool,
@@ -3302,7 +3304,7 @@ export class DagParsingService {
      * Request re-parsing a DAG file.
      * @param data The data for the request.
      * @param data.fileToken
-     * @returns null Successful Response
+     * @returns unknown Successful Response
      * @throws ApiError
      */
     public static reparseDagFile(data: ReparseDagFileData): CancelablePromise<ReparseDagFileResponse> {
